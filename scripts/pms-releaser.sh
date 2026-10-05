@@ -15,8 +15,8 @@ PACKAGE_NAME="$4"
 ARTIFACT_NAME="${5:-$(basename "$FILE_PATH" 2>/dev/null || echo "app")}"
 OS="${6:-android}"
 ARCH="${7:-universal}"
-ACCESS_TOKEN="${ACCESS_TOKEN:-PMS-9xuKyfbBvAJAwv42}"
-RELEASE_URL="${RELEASE_URL:-https://your-release-system.com/access/release}"
+ACCESS_TOKEN="${ACCESS_TOKEN:-}"
+RELEASE_URL="${RELEASE_URL:-}"
 
 # Drone CI environment variables
 DRONE_TAG="${DRONE_TAG}"
@@ -53,8 +53,8 @@ print_usage() {
     echo "  arch           - Target architecture (default: universal)"
     echo ""
     echo "Environment variables:"
-    echo "  ACCESS_TOKEN      - Release system access token"
-    echo "  RELEASE_URL       - Release system URL"
+    echo "  ACCESS_TOKEN      - Release system access token (required)"
+    echo "  RELEASE_URL       - Release system API URL (required)"
     echo "  DRONE_TAG         - Current tag from Drone CI"
     echo "  DRONE_COMMIT      - Current commit from Drone CI"
     echo "  DRONE_BRANCH      - Current branch from Drone CI"
@@ -76,6 +76,41 @@ if [ ! -f "$FILE_PATH" ]; then
     exit 1
 fi
 
+if [ -z "$ACCESS_TOKEN" ]; then
+    echo "Error: ACCESS_TOKEN is required"
+    exit 1
+fi
+
+if [ -z "$RELEASE_URL" ]; then
+    echo "Error: RELEASE_URL is required"
+    exit 1
+fi
+
+if ! command -v jq >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: jq or python3 is required to validate the release response as JSON"
+    exit 1
+fi
+
+TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pms-releaser.XXXXXX")
+cleanup_temp_files() {
+    rm -rf -- "$TMP_DIR"
+}
+trap cleanup_temp_files EXIT
+
+CHANGELOG_FILE="$TMP_DIR/changelog.md"
+CHANGELOG_ERROR_FILE="$TMP_DIR/changelog-error.log"
+RESPONSE_FILE="$TMP_DIR/release-response.json"
+ERROR_FILE="$TMP_DIR/curl-error.log"
+HEADER_FILE="$TMP_DIR/release-headers.txt"
+
+validate_json_response() {
+    if command -v jq >/dev/null 2>&1; then
+        jq empty "$1" >/dev/null 2>&1
+    else
+        python3 -c 'import json, sys; json.load(sys.stdin)' < "$1" >/dev/null 2>&1
+    fi
+}
+
 echo "🚀 Starting release: $VERSION ($FILE_PATH) → $PROJECT_NAME/$PACKAGE_NAME"
 
 # ============================================================================
@@ -84,32 +119,6 @@ echo "🚀 Starting release: $VERSION ($FILE_PATH) → $PROJECT_NAME/$PACKAGE_NA
 
 echo ""
 echo "📝 Generating changelog..."
-
-# Function to get the latest tag
-get_latest_tag() {
-    if [ -n "$1" ]; then
-        echo "$1"
-        return
-    fi
-    
-    # Use DRONE_TAG if available, otherwise get most recent tag
-    if [ -n "$DRONE_TAG" ]; then
-        echo "$DRONE_TAG"
-    else
-        git tag --sort=-version:refname | head -1 2>/dev/null || echo ""
-    fi
-}
-
-# Function to get the previous tag
-get_previous_tag() {
-    if [ -n "$1" ]; then
-        echo "$1"
-        return
-    fi
-    
-    # Get the second most recent tag
-    git tag --sort=-version:refname | head -2 | tail -1 2>/dev/null || echo ""
-}
 
 # Function to categorize commits for changelog
 categorize_commit() {
@@ -143,27 +152,37 @@ generate_changelog() {
         return 0
     fi
 
-    # Get tags
-    CURRENT_TAG=$(get_latest_tag "$VERSION")
-    PREVIOUS_TAG=$(get_previous_tag "")
+    # Use the release tag when it exists; otherwise use the CI commit or HEAD.
+    CURRENT_TAG="$VERSION"
+    TARGET_REF="$VERSION"
+    if ! git rev-parse --verify --quiet "${TARGET_REF}^{commit}" >/dev/null 2>&1; then
+        TARGET_REF="${DRONE_COMMIT:-HEAD}"
+    fi
+    TARGET_COMMIT=$(git rev-parse --verify "${TARGET_REF}^{commit}" 2>/dev/null || echo "")
+    if [ -z "$TARGET_COMMIT" ]; then
+        TARGET_COMMIT=$(git rev-parse --verify 'HEAD^{commit}' 2>/dev/null || echo "")
+    fi
 
-    # Use provided version if no tags found
-    if [ -z "$CURRENT_TAG" ]; then
-        CURRENT_TAG="$VERSION"
+    # Find the nearest tag on the target commit's ancestry, not by global version sort.
+    PREVIOUS_TAG=""
+    if [ -n "$TARGET_COMMIT" ]; then
+        TARGET_PARENT=$(git rev-parse --verify "${TARGET_COMMIT}^" 2>/dev/null || echo "")
+        if [ -n "$TARGET_PARENT" ]; then
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 "$TARGET_PARENT" 2>/dev/null || echo "")
+        fi
     fi
 
     # Generate changelog header
     echo "## ${CURRENT_TAG}"
     echo ""
 
-    # Get commits between tags
-    if [ -n "$PREVIOUS_TAG" ] && [ "$PREVIOUS_TAG" != "$CURRENT_TAG" ]; then
-        COMMITS_RAW=$(git log --pretty=format:"%s|%h" ${PREVIOUS_TAG}..${CURRENT_TAG} 2>/dev/null || echo "")
-    elif [ -n "$CURRENT_TAG" ] && git rev-parse --verify "$CURRENT_TAG" > /dev/null 2>&1; then
-        COMMITS_RAW=$(git log --pretty=format:"%s|%h" ${CURRENT_TAG} 2>/dev/null || echo "")
+    # Get commits between the previous reachable tag and the target commit.
+    if [ -n "$PREVIOUS_TAG" ] && [ -n "$TARGET_COMMIT" ]; then
+        COMMITS_RAW=$(git log --pretty=format:"%s|%h" "$PREVIOUS_TAG..$TARGET_COMMIT" 2>/dev/null || echo "")
+    elif [ -n "$TARGET_COMMIT" ]; then
+        COMMITS_RAW=$(git log --pretty=format:"%s|%h" "$TARGET_COMMIT" 2>/dev/null || echo "")
     else
-        # Fallback: get recent commits
-        COMMITS_RAW=$(git log --pretty=format:"%s|%h" -n 10 HEAD 2>/dev/null || echo "")
+        COMMITS_RAW=""
     fi
 
     if [ -n "$COMMITS_RAW" ]; then
@@ -199,15 +218,14 @@ generate_changelog() {
 }
 
 # Generate the changelog
-CHANGELOG_FILE="/tmp/changelog.md"
-if generate_changelog > "$CHANGELOG_FILE" 2>/tmp/changelog-error.log; then
+if generate_changelog > "$CHANGELOG_FILE" 2>"$CHANGELOG_ERROR_FILE"; then
     CHANGELOG=$(cat "$CHANGELOG_FILE")
     echo "✅ Changelog generated successfully"
 else
     echo "⚠️  Failed to generate changelog, using default"
-    if [ -f /tmp/changelog-error.log ]; then
+    if [ -f "$CHANGELOG_ERROR_FILE" ]; then
         echo "Changelog generation errors:"
-        cat /tmp/changelog-error.log
+        cat "$CHANGELOG_ERROR_FILE"
     fi
     CHANGELOG="## $VERSION
 
@@ -236,13 +254,8 @@ fi
 # Prepare upload with enhanced error handling for Docker environments
 echo "📤 Uploading release artifact..."
 
-# Create response and error log files
-RESPONSE_FILE="/tmp/release-response.json"
-ERROR_FILE="/tmp/curl-error.log"
-
 # Perform the upload with comprehensive error handling
-HEADER_FILE="/tmp/release-headers.txt"
-HTTP_CODE=$(curl -X POST "$RELEASE_URL" \
+if HTTP_CODE=$(curl -X POST "$RELEASE_URL" \
     -H "x-access-token: $ACCESS_TOKEN" \
     -H "User-Agent: PMS-Releaser-Script/1.0" \
     -F "file=@$FILE_PATH" \
@@ -264,20 +277,29 @@ HTTP_CODE=$(curl -X POST "$RELEASE_URL" \
     --fail-with-body \
     --write-out "%{http_code}" \
     --dump-header "$HEADER_FILE" \
-    --output "$RESPONSE_FILE" 2>"$ERROR_FILE" || echo "0")
+    --output "$RESPONSE_FILE" 2>"$ERROR_FILE"); then
+    CURL_EXIT=0
+else
+    CURL_EXIT=$?
+fi
 
 echo ""
 
 # Check the response
-if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+if [ "$CURL_EXIT" -eq 0 ] && [[ "$HTTP_CODE" =~ ^2[0-9]{2}$ ]]; then
     # Verify response is JSON, not an HTML page (e.g. SPA fallback)
-    CONTENT_TYPE=$(grep -i "^content-type:" "$HEADER_FILE" 2>/dev/null | tail -1 | tr -d '\r')
+    CONTENT_TYPE=$(grep -i "^content-type:" "$HEADER_FILE" 2>/dev/null | tail -1 | tr -d '\r' || true)
     if echo "$CONTENT_TYPE" | grep -qi "text/html"; then
         echo "❌ Upload failed - server returned HTML instead of JSON (HTTP $HTTP_CODE)"
         echo "   This usually means RELEASE_URL is pointing to a frontend page, not the API endpoint."
         echo "   Content-Type: $CONTENT_TYPE"
         echo "   Please check your RELEASE_URL configuration."
-        rm -f "$RESPONSE_FILE" "$ERROR_FILE" "$HEADER_FILE" "$CHANGELOG_FILE" /tmp/changelog-error.log
+        exit 1
+    fi
+
+    if ! validate_json_response "$RESPONSE_FILE"; then
+        echo "❌ Upload failed - server returned an invalid JSON response (HTTP $HTTP_CODE)"
+        cat "$RESPONSE_FILE" 2>/dev/null || echo "No response available"
         exit 1
     fi
 
@@ -291,18 +313,14 @@ if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
     echo ""
     echo "✅ Release $VERSION completed!"
     
-    # Cleanup temporary files
-    rm -f "$RESPONSE_FILE" "$ERROR_FILE" "$HEADER_FILE" "$CHANGELOG_FILE" /tmp/changelog-error.log
-    
 else
-    if [ "$HTTP_CODE" = "0" ]; then
-        echo "❌ Upload failed - Network/Connection error"
+    if [ "$HTTP_CODE" = "000" ] || [ -z "$HTTP_CODE" ]; then
+        echo "❌ Upload failed - Network/Connection error (curl exit: $CURL_EXIT)"
     else
-        echo "❌ Upload failed with HTTP code: $HTTP_CODE"
+        echo "❌ Upload failed with HTTP code: $HTTP_CODE (curl exit: $CURL_EXIT)"
         cat "$RESPONSE_FILE" 2>/dev/null || echo "No response available"
     fi
     echo "Error details:"
     cat "$ERROR_FILE" 2>/dev/null || echo "No error details available"
-    rm -f "$HEADER_FILE"
     exit 1
 fi

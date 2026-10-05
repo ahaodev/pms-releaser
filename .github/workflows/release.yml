@@ -16,15 +16,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Publish release
+      - name: Package source archive
+        run: git archive --format=tar.gz --prefix=pms-releaser/ HEAD > pms-releaser-source.tar.gz
+
+      - name: Publish source archive
         uses: ahaodev/pms-releaser@main
         with:
-          file_path: './Dockerfile'
+          file_path: './pms-releaser-source.tar.gz'
           version: ${{ github.ref_name }} # tag name, e.g. v1.0.0
           project_name: ${{ vars.PROJECT_NAME }}   # set in repo/org variables
           package_name: ${{ vars.PACKAGE_NAME }}   # set in repo/org variables
-          artifact_name: 'MyApp'
-          os: 'android'
+          artifact_name: 'pms-releaser-source.tar.gz'
+          os: 'linux'
           arch: 'universal'
           access_token: ${{ secrets.ACCESS_TOKEN }}
           release_url: ${{ secrets.RELEASE_URL }}

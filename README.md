@@ -8,29 +8,29 @@ PMS Releaser 是一款面向 CI/CD 流水线的自动化发布工具，能够从
 
 ### 自动变更日志生成
 
-基于 [约定式提交（Conventional Commits）](https://www.conventionalcommits.org/) 规范，自动分析 Git 提交历史并分类输出：
+按提交标题前缀（区分大小写）生成分类变更日志：
 
-| 提交前缀 | 分类 |
+| 前缀 | 分类 |
 |---|---|
-| `feat` / `feature` | ✨ 新功能 |
-| `fix` / `bugfix` | 🐛 错误修复 |
-| `docs` / `doc` | 📚 文档更新 |
-| `style` / `format` | 💄 样式调整 |
-| `refactor` | ♻️ 代码重构 |
-| `perf` / `performance` | ⚡ 性能优化 |
-| `test` | 🧪 测试相关 |
-| `build` / `ci` / `cd` | 🔧 构建系统 & CI/CD |
-| `chore` | 🔨 维护工作 |
+| `feat*` / `feature*` | ✨ 新功能 |
+| `fix*` / `bugfix*` | 🐛 错误修复 |
+| `docs*` / `doc*` | 📚 文档更新 |
+| `style*` / `format*` | 💄 样式调整 |
+| `refactor*` | ♻️ 代码重构 |
+| `perf*` / `performance*` | ⚡ 性能优化 |
+| `test*` | 🧪 测试相关 |
+| `build*` / `ci*` / `cd*` | 🔧 构建与 CI/CD |
+| `chore*` | 🔨 维护 |
 | 其他 | 📝 其他变更 |
 
-> 💡 Checkout 时请使用 `fetch-depth: 0` 以获取完整的提交历史，确保 changelog 准确完整。
+> GitHub Actions 请设置 `fetch-depth: 0`，确保获取完整提交历史。
 
 ### 发布上传
 
 - 多部分表单（multipart）上传，携带完整元数据
-- 自动重试（最多 3 次，间隔 5 秒）
+- 最多重试 3 次，间隔 5 秒
 - 服务端响应校验：自动检测 HTML 误返（防止 SPA 路由干扰）
-- 原生支持 GitHub Actions 与 Drone CI 环境变量
+- 支持 GitHub Actions 与 Drone CI 环境变量
 
 ---
 
@@ -54,7 +54,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: ahaodev/pms-releaser@main
+      - uses: ahaodev/pms-releaser@main  # 生产环境建议固定到具体 tag，如 @v1.0.0
         with:
           file_path: './app.apk'
           version: ${{ github.ref_name }}
@@ -75,6 +75,17 @@ jobs:
 ```bash
 pms-releaser <file_path> <version> <project_name> <package_name> [artifact_name] [os] [arch]
 ```
+
+### 运行依赖
+
+| 依赖 | 必需 | 说明 |
+|---|---|---|
+| `bash` | ✅ | 脚本解释器 |
+| `curl` | ✅ | 上传制品 |
+| `git` | — | 生成 changelog；不在 Git 仓库时回退为最小化 changelog |
+| `jq` 或 `python3` | ✅ | 校验服务端返回是否为合法 JSON（二者其一即可） |
+
+> Docker 镜像已内置以上依赖，无需额外安装。
 
 ### 必需参数
 
@@ -105,6 +116,8 @@ pms-releaser <file_path> <version> <project_name> <package_name> [artifact_name]
 | `GITHUB_REF` | — | GitHub Actions ref |
 | `GITHUB_REF_NAME` | — | GitHub Actions tag 或分支名 |
 | `GITHUB_SHA` | — | GitHub Actions commit SHA |
+
+> `ACCESS_TOKEN`、`RELEASE_URL` 必填。GitHub Actions 中，`GITHUB_REF` 为 tag 时，`GITHUB_REF_NAME` → `DRONE_TAG`；`GITHUB_SHA` → `DRONE_COMMIT`；`GITHUB_REF_NAME` → `DRONE_BRANCH`。已设置的 `DRONE_*` 值优先。
 
 ---
 
@@ -160,7 +173,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     container:
-      image: hao88/pms-releaser:latest
+      image: ghcr.io/ahaodev/pms-releaser:latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -176,10 +189,6 @@ jobs:
             MyApp android universal
 ```
 
-> 在仓库的 **Settings → Secrets and variables → Actions** 中配置：
-> - **Secrets**：`ACCESS_TOKEN`、`RELEASE_URL`
-> - **Variables**：`PROJECT_NAME`、`PACKAGE_NAME`
-
 ### 3. Drone CI
 
 ```yaml
@@ -193,7 +202,7 @@ trigger:
 
 steps:
   - name: release
-    image: hao88/pms-releaser:latest
+    image: ghcr.io/ahaodev/pms-releaser:latest
     environment:
       ACCESS_TOKEN:
         from_secret: ACCESS_TOKEN
@@ -205,19 +214,35 @@ steps:
 
 ### 4. Docker
 
+> 镜像由本仓库的 tag 流水线发布到 GitHub Container Registry：`ghcr.io/ahaodev/pms-releaser:latest`。
+
 ```bash
 # 基本发布
 docker run --rm -v "$PWD:/workspace" -w /workspace \
   -e ACCESS_TOKEN=your-token \
   -e RELEASE_URL=https://your-release-system.com/access/release \
-  hao88/pms-releaser:latest \
+  ghcr.io/ahaodev/pms-releaser:latest \
   /workspace/app.apk v1.0.0 my-project my-package
 
 # 指定 artifact 名称、平台和架构
 docker run --rm -v "$PWD:/workspace" -w /workspace \
   -e ACCESS_TOKEN=your-token \
   -e RELEASE_URL=https://your-release-system.com/access/release \
-  hao88/pms-releaser:latest \
+  ghcr.io/ahaodev/pms-releaser:latest \
   ./build/MyApp.apk v2.1.0 my-project my-package "MyApplication" "android" "arm64"
 ```
+
+---
+
+## 常见问题
+
+| 现象 | 原因与处理 |
+|---|---|
+| `Error: ACCESS_TOKEN is required` | 未设置 `ACCESS_TOKEN` 或其值为空 |
+| `Error: RELEASE_URL is required` | 未设置 `RELEASE_URL`，脚本不再回退到占位地址 |
+| `Error: jq or python3 is required ...` | 安装 `jq` 或 `python3` 后重试 |
+| `server returned HTML instead of JSON` | `RELEASE_URL` 指向了前端页面而非 API，应指向 `.../access/release` |
+| `server returned an invalid JSON response` | 服务端未返回合法 JSON，检查接口路径与网关配置 |
+| `Network/Connection error` | 网络不可达；上传前会做一次连通性探测，失败仅告警 |
+| changelog 内容不符合预期或落入「其他变更」 | 提交信息未遵循约定式提交；分类使用**前缀匹配且大小写敏感**，并确认 checkout 使用 `fetch-depth: 0` |
 

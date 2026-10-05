@@ -11,7 +11,7 @@ inputs:
     description: 'Path to the release artifact file'
     required: true
   version:
-    description: 'Release version (e.g., v1.0.0). Defaults to the tag name when running on a tag push.'
+    description: 'Release version (e.g., v1.0.0). Typically the tag name; pass github.ref_name from your workflow.'
     required: true
   project_name:
     description: 'Project name in the release system'
