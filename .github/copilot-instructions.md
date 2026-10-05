@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This is a CI/CD release tool distributed as a Docker image (`hao88/pms-releaser`) and a reusable GitHub Action (`ahaodev/pms-releaser`). It automates two things in one step: generating a changelog from git history and uploading a release artifact via HTTP to a PKMS release system.
+This is a CI/CD release tool distributed as a Docker image (`hao88/pms-releaser`) and a reusable GitHub Action (`ahaodev/pms-releaser`). It automates two things in one step: generating a changelog from git history and uploading a release artifact via HTTP to a PMS release system.
 
 ## Architecture
 
@@ -77,7 +77,7 @@ Commits are categorized by conventional commit prefix (case-insensitive glob mat
 - Retries 3 times with 5s delay; 600s max timeout
 
 ### Security
-- Container runs as non-root user `pkms` (uid 1000)
+- Container runs as non-root user `pms` (uid 1000)
 - Secrets must never be hardcoded; always use CI secret injection
 
 ### Environment Variable Precedence

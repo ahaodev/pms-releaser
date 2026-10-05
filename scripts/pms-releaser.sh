@@ -15,7 +15,7 @@ PACKAGE_NAME="$4"
 ARTIFACT_NAME="${5:-$(basename "$FILE_PATH" 2>/dev/null || echo "app")}"
 OS="${6:-android}"
 ARCH="${7:-universal}"
-ACCESS_TOKEN="${ACCESS_TOKEN:-PKMS-9xuKyfbBvAJAwv42}"
+ACCESS_TOKEN="${ACCESS_TOKEN:-PMS-9xuKyfbBvAJAwv42}"
 RELEASE_URL="${RELEASE_URL:-https://your-release-system.com/access/release}"
 
 # Drone CI environment variables
