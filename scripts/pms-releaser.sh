@@ -178,9 +178,9 @@ generate_changelog() {
 
     # Get commits between the previous reachable tag and the target commit.
     if [ -n "$PREVIOUS_TAG" ] && [ -n "$TARGET_COMMIT" ]; then
-        COMMITS_RAW=$(git log --pretty=format:"%s|%h" "$PREVIOUS_TAG..$TARGET_COMMIT" 2>/dev/null || echo "")
+        COMMITS_RAW=$(git log --pretty=format:"%h|%s" "$PREVIOUS_TAG..$TARGET_COMMIT" 2>/dev/null || echo "")
     elif [ -n "$TARGET_COMMIT" ]; then
-        COMMITS_RAW=$(git log --pretty=format:"%s|%h" "$TARGET_COMMIT" 2>/dev/null || echo "")
+        COMMITS_RAW=$(git log --pretty=format:"%h|%s" "$TARGET_COMMIT" 2>/dev/null || echo "")
     else
         COMMITS_RAW=""
     fi
@@ -191,7 +191,8 @@ generate_changelog() {
         declare -A commit_lists
         
         # Process each commit
-        while IFS='|' read -r msg hash; do
+        # Hash comes first and never contains '|', so the subject (the rest of the line) keeps any '|' characters
+        while IFS='|' read -r hash msg; do
             [ -z "$msg" ] && continue
             category=$(categorize_commit "$msg" "$hash")
             if [ -z "${categories[$category]}" ]; then
@@ -254,7 +255,8 @@ fi
 # Prepare upload with enhanced error handling for Docker environments
 echo "📤 Uploading release artifact..."
 
-# Perform the upload with comprehensive error handling
+# Perform the upload with comprehensive error handling.
+# No --retry here: the POST is not idempotent, so a retry after a timeout could create a duplicate release.
 if HTTP_CODE=$(curl -X POST "$RELEASE_URL" \
     -H "x-access-token: $ACCESS_TOKEN" \
     -H "User-Agent: PMS-Releaser-Script/1.0" \
@@ -271,8 +273,6 @@ if HTTP_CODE=$(curl -X POST "$RELEASE_URL" \
     -F "drone_branch=$DRONE_BRANCH" \
     --connect-timeout 30 \
     --max-time 600 \
-    --retry 3 \
-    --retry-delay 5 \
     --show-error \
     --fail-with-body \
     --write-out "%{http_code}" \
