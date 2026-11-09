@@ -1,4 +1,4 @@
-"""End-to-end regressions using local Git repositories and a fake upload client.
+"""Git collector regressions; no PMS credentials or upload client needed.
 
 Run: python3 -m unittest discover -s tests -v
 """
@@ -9,11 +9,11 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / 'scripts/pms-releaser.sh'
+SCRIPT = ROOT / 'scripts/collect-changelog.sh'
 BASH = os.environ.get('TEST_BASH', '/bin/bash')
 
 
-class ReleaserTests(unittest.TestCase):
+class ChangelogTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='pms-releaser-test-')
         self.addCleanup(self.temp.cleanup)
@@ -24,30 +24,13 @@ class ReleaserTests(unittest.TestCase):
         for key in list(self.env):
             if key.startswith(('GIT_', 'DRONE_', 'GITHUB_')):
                 self.env.pop(key)
-        self.env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull,
-                        ACCESS_TOKEN='test-token', RELEASE_URL='https://unused.invalid/release',
-                        CAPTURE=str(self.base / 'uploaded-changelog'))
+        self.env.pop('ACCESS_TOKEN', None)
+        self.env.pop('RELEASE_URL', None)
+        self.env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
         self.git('init', '-b', 'main')
         self.git('config', 'user.name', 'Release Test')
         self.git('config', 'user.email', 'test@example.invalid')
-        self.bin = self.base / 'bin'
-        self.bin.mkdir()
-        fake = self.bin / 'curl'
-        fake.write_text('''#!/usr/bin/env python3
-import os, pathlib, shlex, sys
-args = sys.argv[1:]
-if '-I' in args:
-    sys.exit(0)
-value = next(args[i+1] for i, arg in enumerate(args) if arg == '-F' and args[i+1].startswith('changelog=<'))
-pathlib.Path(os.environ['CAPTURE']).write_text(pathlib.Path(shlex.split(value[len('changelog=<'):])[0]).read_text())
-pathlib.Path(args[args.index('--dump-header')+1]).write_text('Content-Type: application/json\\r\\n')
-pathlib.Path(args[args.index('--output')+1]).write_text('{"ok":true}')
-print('200', end='')
-''')
-        fake.chmod(0o755)
-        self.env['PATH'] = str(self.bin) + os.pathsep + self.env['PATH']
-        self.artifact = self.base / 'app.apk'
-        self.artifact.write_bytes(b'app')
+        self.output = self.base / 'changelog.md'
 
     def git(self, *args, cwd=None):
         return subprocess.check_output(['git', *args], cwd=cwd or self.repo,
@@ -56,20 +39,20 @@ print('200', end='')
     def commit(self, subject):
         self.git('commit', '--allow-empty', '-m', subject)
 
-    def release(self, version='v3', repo=None, success=True):
-        result = subprocess.run([BASH, str(SCRIPT), str(self.artifact), version, 'project', 'package'],
+    def collect(self, version='v3', repo=None, success=True):
+        result = subprocess.run([BASH, str(SCRIPT), version, str(self.output)],
                                 cwd=repo or self.repo, env=self.env, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if success:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn('Release upload successful', result.stdout)
+            self.assertEqual(result.stdout, '', 'file mode should keep stdout clean')
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertFalse(Path(self.env['CAPTURE']).exists(), 'must not upload on Git errors')
+            self.assertFalse(self.output.exists(), 'must not write partial notes on Git errors')
         return result
 
-    def uploaded(self):
-        return Path(self.env['CAPTURE']).read_text()
+    def collected(self):
+        return self.output.read_text()
 
     def merged_release(self):
         self.commit('chore: root')
@@ -85,41 +68,41 @@ print('200', end='')
 
     def test_merge_uses_tag_on_second_parent_and_keeps_subject(self):
         self.merged_release()
-        self.release()
-        self.assertIn('fix: main | keep separator', self.uploaded())
-        self.assertNotIn('already released', self.uploaded())
-        self.assertNotIn('chore: root', self.uploaded())
+        self.collect()
+        self.assertIn('fix: main | keep separator', self.collected())
+        self.assertNotIn('already released', self.collected())
+        self.assertNotIn('chore: root', self.collected())
 
     def test_first_release_on_bash_32_compatible_path(self):
         self.commit('feat: first')
         self.commit('fix: next')
-        self.release()
-        self.assertIn('### ✨ New Features', self.uploaded())
-        self.assertIn('### 🐛 Bug Fixes', self.uploaded())
+        self.collect()
+        self.assertIn('### ✨ New Features', self.collected())
+        self.assertIn('### 🐛 Bug Fixes', self.collected())
 
     def test_shallow_clone_fetches_full_history(self):
         self.merged_release()
         shallow = self.base / 'shallow'
         self.git('clone', '--depth=1', '--branch', 'v3', self.repo.as_uri(), str(shallow), cwd=self.base)
-        result = self.release(repo=shallow)
+        result = self.collect(repo=shallow)
         self.assertIn('Shallow repository detected', result.stderr)
         self.assertEqual(self.git('rev-parse', '--is-shallow-repository', cwd=shallow), 'false')
-        self.assertIn('fix: main', self.uploaded())
-        self.assertNotIn('already released', self.uploaded())
+        self.assertIn('fix: main', self.collected())
+        self.assertNotIn('already released', self.collected())
 
-    def test_shallow_clone_fetch_failure_stops_upload(self):
+    def test_shallow_clone_fetch_failure_stops_collection(self):
         self.commit('chore: root')
         self.commit('fix: change')
         shallow = self.base / 'shallow'
         self.git('clone', '--depth=1', self.repo.as_uri(), str(shallow), cwd=self.base)
         self.git('remote', 'set-url', 'origin', str(self.base / 'missing'), cwd=shallow)
-        result = self.release(repo=shallow, success=False)
+        result = self.collect(repo=shallow, success=False)
         self.assertIn('Cannot complete Git history', result.stderr)
 
-    def test_untrusted_owner_stops_upload_and_exposes_error(self):
+    def test_untrusted_owner_stops_collection_and_exposes_error(self):
         self.commit('fix: change')
         self.env['GIT_TEST_ASSUME_DIFFERENT_OWNER'] = '1'
-        result = self.release(success=False)
+        result = self.collect(success=False)
         self.assertIn('dubious ownership', result.stderr)
 
     def test_exact_safe_directory_allows_mounted_repository(self):
@@ -129,36 +112,45 @@ print('200', end='')
         self.git('config', '--file', str(system_config), '--add', 'safe.directory', str(self.repo.resolve()))
         self.env['GIT_CONFIG_SYSTEM'] = str(system_config)
         self.env['GIT_TEST_ASSUME_DIFFERENT_OWNER'] = '1'
-        self.release()
-        self.assertIn('fix: mounted repository', self.uploaded())
-        dockerfile = (ROOT / 'Dockerfile').read_text()
-        for mount in ('/workspace', '/github/workspace'):
-            self.assertIn('safe.directory ' + mount, dockerfile)
-        self.assertNotIn('safe.directory *', dockerfile)
-
-    def test_large_changelog_reaches_upload(self):
+        self.collect()
+        self.assertIn('fix: mounted repository', self.collected())
+    def test_large_changelog_written(self):
         for index in range(35):
             self.commit('fix: %s %s' % (index, 'x' * 3000))
-        self.release()
-        self.assertGreater(len(self.uploaded()), 100000)
-        self.assertIn('fix: 0 ', self.uploaded())
-        self.assertIn('fix: 34 ', self.uploaded())
+        self.collect()
+        self.assertGreater(len(self.collected()), 100000)
+        self.assertIn('fix: 0 ', self.collected())
+        self.assertIn('fix: 34 ', self.collected())
 
-    def test_non_repository_warns_and_uploads_minimal_changelog(self):
-        result = self.release(repo=self.base)
+    def test_non_repository_warns_and_collects_minimal_changelog(self):
+        result = self.collect(repo=self.base)
         self.assertIn('Not in a git repository', result.stderr)
-        self.assertIn('- Release v3', self.uploaded())
+        self.assertIn('- Release v3', self.collected())
 
-    def test_broken_git_entry_stops_upload(self):
+    def test_broken_git_entry_stops_collection(self):
         broken = self.base / 'broken'
         broken.mkdir()
         (broken / '.git').write_text('gitdir: missing-repository\n')
-        self.release(repo=broken, success=False)
+        self.collect(repo=broken, success=False)
 
-    def test_invalid_ci_commit_stops_upload(self):
+    def test_invalid_ci_commit_stops_collection(self):
         self.commit('fix: change')
         self.env['GITHUB_SHA'] = 'nonexistent-commit'
-        self.release(success=False)
+        self.collect(success=False)
+
+    def test_stdout_matches_file_output_without_credentials(self):
+        self.commit('feat: independent collection')
+        self.collect()
+        result = subprocess.run([BASH, str(SCRIPT), 'v3'], cwd=self.repo,
+                                env=self.env, capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout, self.collected())
+        self.assertIn('feat: independent collection', result.stdout)
+
+    def test_missing_version_fails(self):
+        result = subprocess.run([BASH, str(SCRIPT)], cwd=self.repo,
+                                env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Usage:', result.stderr)
 
 
 if __name__ == '__main__':

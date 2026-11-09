@@ -26,12 +26,12 @@ ENV TZ=Asia/Shanghai
 # Create working directory
 WORKDIR /workspace
 
-# Copy the integrated release script
-COPY scripts/pms-releaser.sh /usr/local/bin/pms-releaser
-RUN chmod +x /usr/local/bin/pms-releaser
-
-# Create a symlink for backward compatibility
-RUN ln -s /usr/local/bin/pms-releaser /usr/local/bin/pms-releaser.sh
+# Install both standalone commands and the compatibility entrypoint as siblings.
+COPY scripts/ /usr/local/bin/
+RUN chmod +x /usr/local/bin/pms-releaser.sh /usr/local/bin/collect-changelog.sh /usr/local/bin/pms-publish.sh && \
+    ln -s /usr/local/bin/pms-releaser.sh /usr/local/bin/pms-releaser && \
+    ln -s /usr/local/bin/collect-changelog.sh /usr/local/bin/collect-changelog && \
+    ln -s /usr/local/bin/pms-publish.sh /usr/local/bin/pms-publish
 
 # Set default environment variables
 ENV ACCESS_TOKEN=""

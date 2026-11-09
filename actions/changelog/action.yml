@@ -1,0 +1,25 @@
+name: Collect Git changelog
+description: Collect categorized Git commits as Markdown without release credentials
+inputs:
+  version:
+    description: Release version or tag name
+    required: true
+outputs:
+  changelog_file:
+    description: Workspace-relative Markdown file, reusable by Docker Actions and gh release
+    value: ${{ steps.collect.outputs.changelog_file }}
+runs:
+  using: composite
+  steps:
+    - name: Collect changelog
+      id: collect
+      shell: bash
+      env:
+        RELEASE_VERSION: ${{ inputs.version }}
+        COLLECTOR: ${{ github.action_path }}/../../scripts/collect-changelog.sh
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        notes_dir=$(mktemp -d './.pms-changelog.XXXXXX')
+        notes_file="$notes_dir/changelog.md"
+        bash "$COLLECTOR" "$RELEASE_VERSION" "$notes_file"
+        printf 'changelog_file=%s\n' "$notes_file" >> "$GITHUB_OUTPUT"

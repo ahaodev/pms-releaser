@@ -22,10 +22,14 @@ jobs:
           python-version: '3.12'
       - name: Check shell syntax and JSON tooling
         run: |
-          /bin/bash -n scripts/pms-releaser.sh
+          for script in scripts/*.sh; do /bin/bash -n "$script"; done
           jq --version
-      - name: Run Git and HTTP regressions
-        run: python3 -m unittest discover -s tests -v
+      - name: Test Git collection
+        run: python3 -m unittest discover -s tests -p 'test_changelog.py' -v
+      - name: Test PMS publishing
+        run: python3 -m unittest discover -s tests -p 'test_pms_publish.py' -v
+      - name: Test compatibility and Action wiring
+        run: python3 -m unittest discover -s tests -p 'test_integration.py' -v
       - name: Build container from current source
         if: runner.os == 'Linux'
         run: docker build -t pms-releaser:test .
@@ -35,5 +39,8 @@ jobs:
           docker run --rm --entrypoint /bin/bash pms-releaser:test -c '
             test "$(id -u)" = 0 &&
             bash -n /usr/local/bin/pms-releaser &&
+            bash -n /usr/local/bin/collect-changelog.sh &&
+            bash -n /usr/local/bin/pms-publish.sh &&
+            collect-changelog vtest >/dev/null &&
             command -v curl && command -v git && command -v jq
           '

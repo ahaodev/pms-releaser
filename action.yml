@@ -31,6 +31,10 @@ inputs:
     description: 'Target architecture (default: universal)'
     required: false
     default: 'universal'
+  changelog_file:
+    description: 'Existing Markdown changelog; omit to collect Git commits automatically'
+    required: false
+    default: ''
   access_token:
     description: 'Release system access token'
     required: true
@@ -49,6 +53,7 @@ runs:
     - ${{ inputs.artifact_name }}
     - ${{ inputs.os }}
     - ${{ inputs.arch }}
+    - ${{ inputs.changelog_file }}
   env:
     ACCESS_TOKEN: ${{ inputs.access_token }}
     RELEASE_URL: ${{ inputs.release_url }}

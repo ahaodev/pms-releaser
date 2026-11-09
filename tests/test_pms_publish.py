@@ -1,4 +1,4 @@
-"""Exercise the script with real curl and a local HTTP server; no external service."""
+"""PMS publisher regressions with real curl and a local HTTP server; no Git access."""
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,7 +37,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(self.server.response)
 
 
-class HttpTests(unittest.TestCase):
+class PmsPublishTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='pms-http-')
         self.addCleanup(self.temp.cleanup)
@@ -59,9 +59,11 @@ class HttpTests(unittest.TestCase):
                         RELEASE_URL='http://127.0.0.1:%s/release' % self.server.server_port)
         self.artifact = self.base / 'app.apk'
         self.artifact.write_bytes(b'actual artifact\x00contents')
+        self.notes = self.base / 'changelog.md'
+        self.notes.write_text('## v1\n\n- Release v1\n')
         # Isolated tool paths allow the same cases to exercise both JSON backends.
         self.paths = {}
-        required = ('curl', 'git', 'python3', 'basename', 'mktemp', 'rm', 'cat',
+        required = ('curl', 'python3', 'basename', 'mktemp', 'rm', 'cat',
                     'head', 'grep', 'tail', 'tr', 'dirname')
         for backend in ('python', 'jq'):
             bindir = self.base / backend
@@ -82,8 +84,8 @@ class HttpTests(unittest.TestCase):
             self.skipTest('jq is not installed')
         env = dict(self.env, PATH=self.paths[backend])
         args = metadata or ['v1', 'project', 'package', 'artifact', 'linux', 'universal']
-        result = subprocess.run([BASH, str(ROOT / 'scripts/pms-releaser.sh'),
-                                 str(artifact or self.artifact), *args],
+        result = subprocess.run([BASH, str(ROOT / 'scripts/pms-publish.sh'),
+                                 str(artifact or self.artifact), *args[:3], str(self.notes), *args[3:]],
                                 cwd=self.base, env=env, capture_output=True, text=True)
         if success:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -128,7 +130,7 @@ class HttpTests(unittest.TestCase):
                 artifact.write_bytes(self.artifact.read_bytes())
                 self.release(artifact=artifact)
                 self.assertEqual(self.server.fields['file'], self.artifact.read_bytes())
-                self.assertIn(b'- Release v1', self.server.fields['changelog'])
+                self.assertEqual(self.server.fields['changelog'], self.notes.read_bytes())
                 self.assertEqual(list(tmpdir.iterdir()), [])
 
     def test_http_failures_and_html_do_not_report_success_or_retry(self):
@@ -144,6 +146,18 @@ class HttpTests(unittest.TestCase):
                 posts_before = self.server.posts
                 self.release(success=False)
                 self.assertEqual(self.server.posts, posts_before + 1)
+
+    def test_publishes_supplied_notes_without_git_access(self):
+        self.notes.write_text('## Custom notes\n\nExact content | <literal>\n')
+        self.env['GITHUB_SHA'] = 'not-a-git-object'
+        self.release()
+        self.assertEqual(self.server.fields['changelog'], self.notes.read_bytes())
+        self.assertEqual(self.server.fields['drone_commit'], b'not-a-git-object')
+
+    def test_missing_notes_stop_before_upload(self):
+        self.notes.unlink()
+        self.release(success=False)
+        self.assertEqual(self.server.posts, 0)
 
 
 if __name__ == '__main__':

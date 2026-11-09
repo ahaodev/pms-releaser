@@ -1,15 +1,18 @@
 # Repository instructions
 
-PMS Releaser generates a Git changelog and uploads artifacts to a PMS HTTP API. Usage, parameters, and defaults are documented in [README.md](../README.md); keep those and `action.yml` consistent with the script.
+PMS Releaser provides independent Git changelog collection and PMS artifact upload. Usage, parameters, and defaults are documented in [README.md](../README.md); keep those and `action.yml` consistent with the script.
 
 ## Files
 
-- `scripts/pms-releaser.sh`: changelog generation and multipart upload; Docker entrypoint is `pms-releaser`.
+- `scripts/collect-changelog.sh`: Markdown collection to stdout or a file; no PMS credentials.
+- `scripts/pms-publish.sh`: upload an artifact and existing notes; no Git calls.
+- `scripts/pms-releaser.sh`: compatibility wrapper; optional eighth argument supplies existing notes.
+- `actions/changelog/action.yml`: composite collector, exposes a workspace-relative `changelog_file`.
 - `action.yml`: Docker Action wrapper; positional arguments follow the README signature.
 - `Dockerfile`: runtime dependencies and exact trusted workspace paths; runs as root for GitHub workspace access.
-- `tests/`: temporary Git fixtures and real curl requests to a local HTTP server.
+- `tests/test_changelog.py`: Git-only tests; `test_pms_publish.py`: real HTTP uploads without Git; `test_integration.py`: wrapper/action wiring.
 - `.github/workflows/test.yml`: reusable Linux/macOS tests and Linux container checks.
-- `.github/workflows/{release,docker-publish}.yml`: publish on `v*` tags after tests pass; source releases use `uses: ./`.
+- Tag workflows wait for tests: `github-release.yml` publishes notes and source to GitHub, `docker-publish.yml` publishes GHCR, `release.yml` optionally publishes to PMS when project/package variables exist.
 
 ## Behavior to preserve
 
@@ -25,7 +28,7 @@ PMS Releaser generates a Git changelog and uploads artifacts to a PMS HTTP API. 
 ## Validation
 
 ```bash
-bash -n scripts/pms-releaser.sh
+for script in scripts/*.sh; do bash -n "$script"; done
 python3 -m unittest discover -s tests -v
 docker build -t pms-releaser:test .
 ```

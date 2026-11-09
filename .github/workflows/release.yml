@@ -1,4 +1,4 @@
-name: Release
+name: Publish to PMS
 
 on:
   push:
@@ -10,6 +10,7 @@ jobs:
     uses: ./.github/workflows/test.yml
 
   release:
+    if: vars.PROJECT_NAME != '' && vars.PACKAGE_NAME != ''
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -20,6 +21,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Collect changelog
+        id: changelog
+        uses: ./actions/changelog
+        with:
+          version: ${{ github.ref_name }}
+
       - name: Package source archive
         run: git archive --format=tar.gz --prefix=pms-releaser/ HEAD > pms-releaser-source.tar.gz
 
@@ -27,7 +34,8 @@ jobs:
         uses: ./
         with:
           file_path: './pms-releaser-source.tar.gz'
-          version: ${{ github.ref_name }} # tag name, e.g. v1.0.0
+          version: ${{ github.ref_name }}
+          changelog_file: ${{ steps.changelog.outputs.changelog_file }}
           project_name: ${{ vars.PROJECT_NAME }}   # set in repo/org variables
           package_name: ${{ vars.PACKAGE_NAME }}   # set in repo/org variables
           artifact_name: 'pms-releaser-source.tar.gz'

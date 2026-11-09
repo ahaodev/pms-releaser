@@ -1,0 +1,44 @@
+name: GitHub Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Collect release notes
+        id: changelog
+        uses: ./actions/changelog
+        with:
+          version: ${{ github.ref_name }}
+      - name: Package source archive
+        run: git archive --format=tar.gz --prefix=pms-releaser/ HEAD > pms-releaser-source.tar.gz
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          NOTES_FILE: ${{ steps.changelog.outputs.changelog_file }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --notes-file "$NOTES_FILE"
+            gh release upload "$RELEASE_TAG" pms-releaser-source.tar.gz --clobber
+          else
+            flags=()
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" \
+              --notes-file "$NOTES_FILE" "${flags[@]}" pms-releaser-source.tar.gz
+          fi
