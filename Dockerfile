@@ -16,6 +16,10 @@ RUN apk add --no-cache \
     ca-certificates \
     tzdata
 
+# Trust only the documented container mount roots, without changing host Git config.
+RUN git config --system --add safe.directory /workspace && \
+    git config --system --add safe.directory /github/workspace
+
 # Set timezone (optional, can be overridden)
 ENV TZ=Asia/Shanghai
 
@@ -32,22 +36,12 @@ RUN ln -s /usr/local/bin/pms-releaser /usr/local/bin/pms-releaser.sh
 # Set default environment variables
 ENV ACCESS_TOKEN=""
 ENV RELEASE_URL=""
-ENV DRONE_TAG=""
-ENV DRONE_COMMIT=""
-ENV DRONE_BRANCH=""
 ENV GITHUB_REF=""
 ENV GITHUB_REF_NAME=""
 ENV GITHUB_SHA=""
 
-# Create non-root user for security
-RUN addgroup -g 1000 pms && \
-    adduser -u 1000 -G pms -s /bin/bash -D pms
-
-# Set ownership of working directory
-RUN chown -R pms:pms /workspace
-
-# Switch to non-root user
-USER pms
+# Docker Actions use root to access runner-owned artifacts and Git metadata.
+USER root
 
 # Override alpine/curl's ENTRYPOINT so args are passed to pms-releaser
 ENTRYPOINT ["pms-releaser"]

@@ -6,7 +6,11 @@ on:
       - 'v*'
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   release:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,7 +24,7 @@ jobs:
         run: git archive --format=tar.gz --prefix=pms-releaser/ HEAD > pms-releaser-source.tar.gz
 
       - name: Publish source archive
-        uses: ahaodev/pms-releaser@main
+        uses: ./
         with:
           file_path: './pms-releaser-source.tar.gz'
           version: ${{ github.ref_name }} # tag name, e.g. v1.0.0

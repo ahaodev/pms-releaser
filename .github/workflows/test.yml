@@ -1,0 +1,39 @@
+name: Test
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check shell syntax and JSON tooling
+        run: |
+          /bin/bash -n scripts/pms-releaser.sh
+          jq --version
+      - name: Run Git and HTTP regressions
+        run: python3 -m unittest discover -s tests -v
+      - name: Build container from current source
+        if: runner.os == 'Linux'
+        run: docker build -t pms-releaser:test .
+      - name: Check container user and tools
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm --entrypoint /bin/bash pms-releaser:test -c '
+            test "$(id -u)" = 0 &&
+            bash -n /usr/local/bin/pms-releaser &&
+            command -v curl && command -v git && command -v jq
+          '
