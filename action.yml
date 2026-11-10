@@ -32,7 +32,7 @@ inputs:
     required: false
     default: 'universal'
   changelog_file:
-    description: 'Existing Markdown changelog; omit to collect Git commits automatically'
+    description: 'Existing Markdown changelog; omit to resolve CHANGELOG.md or collect Git commits'
     required: false
     default: ''
   access_token:

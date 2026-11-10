@@ -53,7 +53,7 @@ steps:
 | `file_path` | 制品文件路径 | 必填 |
 | `version` | 发布版本，如 `v1.0.0` | 必填 |
 | `project_name` / `package_name` | PMS 项目和包名称 | 必填 |
-| `changelog_file` | 工作区内的 Markdown 文件路径 | 自动收集 Git 记录 |
+| `changelog_file` | 工作区内的 Markdown 文件路径 | 优先提取 CHANGELOG.md，缺少文件或版本时收集 Git 记录 |
 | `artifact_name` | 制品显示名称 | 文件名 |
 | `os` / `arch` | 目标平台和架构 | `android` / `universal` |
 | `access_token` / `release_url` | PMS 令牌和 API 地址 | 必填 |
@@ -98,3 +98,11 @@ python3 -m unittest discover -s tests -v
 ```
 
 `test_changelog.py` 验证 Git 收集，`test_pms_publish.py` 用真实 curl 和本地 HTTP 服务验证上传，`test_integration.py` 验证组合入口。安装 jq 可同时测试 jq/Python 两条校验路径。CI 在 Linux/macOS 测试，Linux 还会构建和检查镜像。
+
+## 优先使用仓库日志
+
+组合入口和 changelog Action 默认先读取工作目录的 `CHANGELOG.md`，提取当前版本的二级标题章节，例如 `## [1.2.3] - 2026-11-10` 或 `## v1.2.3`。匹配忽略版本开头的 `v`；预发布版本独立匹配。提取包含版本标题，不包含其他版本、前言及末尾链接定义。
+
+文件不存在或找不到版本时自动收集 Git 提交；文件不可读、版本章节为空或重复时停止发布。日志会说明来源及回退原因。显式传入 `changelog_file` 始终使用全文，无效路径报错，不回退。源文件不会被修改。
+
+`collect-changelog.sh` 仍然只收集 Git 提交；`pms-publish.sh` 仍然只上传指定文件。

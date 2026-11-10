@@ -13,6 +13,6 @@ if [ -z "$CHANGELOG_FILE" ]; then
     TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pms-releaser.XXXXXX")
     trap 'rm -rf -- "$TMP_DIR"' EXIT
     CHANGELOG_FILE="$TMP_DIR/changelog.md"
-    bash "$SCRIPT_DIR/collect-changelog.sh" "$2" "$CHANGELOG_FILE"
+    bash "$SCRIPT_DIR/resolve-changelog.sh" "$2" "$CHANGELOG_FILE"
 fi
 bash "$SCRIPT_DIR/pms-publish.sh" "$1" "$2" "$3" "$4" "$CHANGELOG_FILE" "${5:-}" "${6:-android}" "${7:-universal}"

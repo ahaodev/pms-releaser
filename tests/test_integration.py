@@ -18,6 +18,7 @@ class IntegrationTests(unittest.TestCase):
         self.scripts = self.base / 'scripts'
         self.scripts.mkdir()
         (self.scripts / 'pms-releaser.sh').write_bytes((ROOT / 'scripts/pms-releaser.sh').read_bytes())
+        (self.scripts / 'resolve-changelog.sh').write_bytes((ROOT / 'scripts/resolve-changelog.sh').read_bytes())
         self.env = dict(os.environ, CAPTURE=str(self.base / 'captured'),
                         COLLECTED=str(self.base / 'collected'))
         for key in list(self.env):
@@ -56,6 +57,29 @@ exit "${PUBLISH_EXIT:-0}"
         self.assertEqual(notes.read_text(), 'Provided notes')
         self.assertEqual(Path(self.env['CAPTURE'] + '.notes').read_text(), 'Provided notes')
 
+    def test_default_changelog_extracts_version(self):
+        (self.base / 'CHANGELOG.md').write_text('# History\n\n## [1] - 2026-11-10\n\n- Fixed\n\n## 0\n- Old\n')
+        result = self.run_wrapper()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(Path(self.env['COLLECTED']).exists())
+        notes = Path(self.env['CAPTURE'] + '.notes').read_text()
+        self.assertIn('- Fixed', notes)
+        self.assertNotIn('- Old', notes)
+
+    def test_missing_version_falls_back(self):
+        (self.base / 'CHANGELOG.md').write_text('## v0\n- Old\n')
+        result = self.run_wrapper()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(Path(self.env['COLLECTED']).exists())
+
+    def test_invalid_sections_prevent_publish(self):
+        for content in ('## v1\n\n', '## v1\n- A\n## [1]\n- B\n'):
+            with self.subTest(content=content):
+                (self.base / 'CHANGELOG.md').write_text(content)
+                result = self.run_wrapper()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(Path(self.env['CAPTURE']).exists())
+
     def test_publisher_failure_propagates_and_cleans_up(self):
         self.env['PUBLISH_EXIT'] = '9'
         result = self.run_wrapper()
@@ -74,7 +98,7 @@ exit "${PUBLISH_EXIT:-0}"
         command = textwrap.dedent(action.split('      run: |\n', 1)[1])
         output = self.base / 'action-output'
         env = dict(self.env, GITHUB_WORKSPACE=str(self.base), GITHUB_OUTPUT=str(output),
-                   RELEASE_VERSION='v1', COLLECTOR=str(ROOT / 'scripts/collect-changelog.sh'))
+                   RELEASE_VERSION='v1', COLLECTOR=str(ROOT / 'scripts/resolve-changelog.sh'))
         result = subprocess.run([BASH, '-c', command], cwd=self.base, env=env,
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)

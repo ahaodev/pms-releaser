@@ -1,5 +1,5 @@
 name: Collect Git changelog
-description: Collect categorized Git commits as Markdown without release credentials
+description: Resolve CHANGELOG.md release notes or collect Git commits
 inputs:
   version:
     description: Release version or tag name
@@ -16,7 +16,7 @@ runs:
       shell: bash
       env:
         RELEASE_VERSION: ${{ inputs.version }}
-        COLLECTOR: ${{ github.action_path }}/../../scripts/collect-changelog.sh
+        COLLECTOR: ${{ github.action_path }}/../../scripts/resolve-changelog.sh
       run: |
         cd "$GITHUB_WORKSPACE"
         notes_dir=$(mktemp -d './.pms-changelog.XXXXXX')
